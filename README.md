@@ -1,1 +1,1 @@
-1: Echo
+Solutions to the gossip glomers challenge series
