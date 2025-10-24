@@ -1,0 +1,9 @@
+# rust
+**/target
+**/store
+
+# darwin
+.DS_Store
+
+# nix
+result
