@@ -1,11 +1,9 @@
 [package]
-name = "single-node-broadcast"
+name = "node"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-node.workspace = true
-
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
