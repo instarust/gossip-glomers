@@ -28,6 +28,8 @@
         packages = [
           (rust-toolchain.override
             {extensions = ["rust-src" "rust-analyzer" "clippy"];})
+
+          pkgs.maelstrom-clj
         ];
         shellHook = ''echo "with löve from wrd :)"'';
       };
