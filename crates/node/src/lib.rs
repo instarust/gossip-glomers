@@ -11,7 +11,6 @@ use tokio::task;
 use serde_json::Value;
 
 use serde_json::json;
-struct Empty;
 
 pub type FnHandler = Arc<
     dyn Fn(Arc<Mutex<Node>>, serde_json::Value) -> Pin<Box<dyn Future<Output = ()> + Send>>
@@ -209,14 +208,13 @@ impl Node {
         node.msg_count += 1;
         let msg_count = node.msg_count;
         msg["body"]["msg_id"] = msg_count.try_into().unwrap();
-        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
         // register the callback
         node.callbacks.insert(
             msg_count,
             Box::new(move || {
-                let e = Empty;
-                let _ = tx.send(e);
+                let _ = tx.send(());
             }),
         );
 
