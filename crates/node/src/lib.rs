@@ -15,6 +15,7 @@ pub type FnHandler = Arc<
         + Send
         + Sync,
 >;
+#[derive(Default)]
 pub struct Node {
     pub id: String,
     pub values: HashSet<u64>,
@@ -45,6 +46,8 @@ impl fmt::Debug for Node {
     }
 }
 
+/// Returns a map of default message handlers for the node.
+/// The handlers created by this function may panic if the mutex on the node is poisoned.
 #[must_use]
 pub fn build_default_handlers() -> HashMap<String, FnHandler> {
     let mut handlers: HashMap<String, FnHandler> = HashMap::new();
@@ -102,18 +105,6 @@ pub fn build_default_handlers() -> HashMap<String, FnHandler> {
     handlers
 }
 
-impl Default for Node {
-    fn default() -> Self {
-        Node {
-            id: String::new(),
-            values: HashSet::new(),
-            callbacks: HashMap::new(),
-            topology: HashSet::new(),
-            msg_count: 0,
-        }
-    }
-}
-
 impl Node {
     /// # Errors
     /// - forwards `io` errors
@@ -131,7 +122,7 @@ impl Node {
                 let h = handlers.clone();
                 tokio::spawn(async move {
                     if let Err(e) = Node::handle_msg(node_mut, &h, msg).await {
-                        log::error!("failed to handle message: {}", e);
+                        log::error!("failed to handle message: {e}");
                     }
                 });
             }
@@ -160,8 +151,7 @@ impl Node {
         Ok(())
     }
 
-    /// the function returns no errors, but logs them instead, you're expected to ignore its
-    /// failures for convenience
+    #[must_use]
     pub fn build_reply(
         &self,
         r#type: &str,
@@ -183,15 +173,20 @@ impl Node {
         Some(json!({"src": self.id, "dest": dest, "body": body}))
     }
 
+    /// # Errors
+    /// - forwards `serde_json` errors
+    /// - forwards `io` errors
+    /// # Panics
+    /// This function will panic if the mutex on `node_arc` is poisoned.
     pub fn send_synchronous(
-        node_mut: Arc<Mutex<Node>>,
+        node_mut: &Arc<Mutex<Node>>,
         mut msg: serde_json::Value,
         message_timout: tokio::time::Duration,
     ) -> io::Result<()> {
         let mut node = node_mut.lock().unwrap();
         node.msg_count += 1;
         let msg_count = node.msg_count;
-        msg["body"]["msg_id"] = msg_count.try_into().unwrap();
+        msg["body"]["msg_id"] = msg_count.into();
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
         // register the callback
@@ -213,18 +208,24 @@ impl Node {
                         break;
                     },
 
-                    _ = tokio::time::sleep(message_timout) => {
+                    () = tokio::time::sleep(message_timout) => {
                         let node = node_mut_copy.lock().unwrap();
                         log::info!("node {}: receiving a response from {} timed out, sending again", node.id, msg["dest"].as_str().unwrap());
                         let _ = Node::send(&msg);
                     },
                 }
             }
-            log::info!("broadcast exiting")
+            log::info!("broadcast exiting");
         });
         Ok(())
     }
 
+    /// # Errors
+    /// - forwards `serde_json` errors
+    /// - returns an error if `msg["body"]["type"]` is not a string
+    /// - returns an error if the message type is not found in the handlers map
+    /// # Panics
+    /// - panics if the mutex on `node_arc` is poisoned
     pub async fn handle_msg(
         node_arc: Arc<Mutex<Node>>,
         handlers_map: &HashMap<String, FnHandler>,
@@ -232,13 +233,14 @@ impl Node {
     ) -> Result<(), String> {
         let msg: serde_json::Value = serde_json::from_str(&raw_msg).map_err(|e| e.to_string())?;
 
-        if let Some(id) = msg["body"]["msg_id"].as_u64() {
-            if let Some(callback) = node_arc.lock().unwrap().callbacks.remove(&id) {
-                callback();
-            }
+        if let Some(callback) = msg["body"]["msg_id"]
+            .as_u64()
+            .and_then(|id| node_arc.lock().ok()?.callbacks.remove(&id))
+        {
+            callback();
         }
 
-        let msg_type = msg["body"]["type"].as_str().unwrap();
+        let msg_type = msg["body"]["type"].as_str().map_err(|e| e.to_string())?;
         let handler = handlers_map
             .get(msg_type)
             .ok_or(format!("handler {msg_type} not found"))?;

@@ -26,7 +26,7 @@ async fn main() -> io::Result<()> {
                     return;
                 };
 
-                if let Err(e) = Node::send(&reply) {
+                if let Err(e) = Node::send(reply) {
                     log::error!("failed to send echo_ok: {e}");
                 }
             })

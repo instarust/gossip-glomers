@@ -42,7 +42,7 @@ async fn main() -> io::Result<()> {
             Box::pin(async move {
                 let mut node = node_mutex.lock().unwrap();
                 let number = msg["body"]["message"].as_u64().unwrap();
-                if let Some(_) = node.values.get(&number) {
+                if node.values.contains(&number) {
                     return;
                 }
                 node.values.insert(number);
@@ -64,8 +64,8 @@ async fn main() -> io::Result<()> {
                     });
                     let node_mut = node_mutex.clone();
                     let _ = Node::send_synchronous(
-                        node_mut,
-                        new_msg.to_owned(),
+                        &node_mut,
+                        new_msg.clone(),
                         tokio::time::Duration::from_millis(500),
                     );
                 }
