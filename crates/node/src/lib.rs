@@ -136,13 +136,9 @@ impl Node {
     /// - forwards `io` errors
     pub async fn serve(
         node: Arc<Mutex<Node>>,
-        extra_handlers: HashMap<String, FnHandler>,
+        handlers: HashMap<String, FnHandler>,
     ) -> io::Result<()> {
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-        let mut handlers = build_default_handlers();
-        for (handler_name, h) in extra_handlers {
-            handlers.insert(handler_name, h);
-        }
 
         tokio::spawn(async move {
             log::info!("starting message thread");
