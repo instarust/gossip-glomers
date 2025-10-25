@@ -3,32 +3,31 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     io::{self, Stdout, Write},
-    sync::{Arc, Mutex, mpsc},
+    sync::mpsc,
     thread,
 };
 
 use serde_json::json;
 
-pub type FnHandler = Box<dyn Fn(&mut Node, serde_json::Value) + Send + Sync>;
-#[allow(missing_debug_implementations)]
+pub type FnHandler = Box<dyn Fn(&mut Node, &serde_json::Value) + Send + Sync>;
 pub struct Node {
-    stdout: RefCell<Stdout>,
+    stdout: Stdout,
     pub id: String,
     pub values: HashSet<u64>,
-    pub topology: RefCell<HashMap<String, bool>>,
+    pub topology: RefCell<HashSet<String>>,
     pub handlers: HashMap<String, FnHandler>,
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
-            .field("stdout", &self.stdout.borrow())
+            .field("stdout", &self.stdout)
             .field("values", &self.values)
             .field("topology", &self.topology.borrow())
             .field(
                 "handlers",
                 &format!(
-                    "{} handler(s, keys: `{}`",
+                    "{} handlers, keys: `{}`",
                     self.handlers.len(),
                     self.handlers
                         .keys()
@@ -45,32 +44,54 @@ impl fmt::Debug for Node {
 #[allow(clippy::missing_panics_doc)] // TODO
 pub fn build_default_handlers() -> HashMap<String, FnHandler> {
     let mut handlers: HashMap<String, FnHandler> = HashMap::new();
+
     handlers.insert(
         String::from("init"),
         Box::new(|node, msg| {
             if !node.id.is_empty() {
                 return;
             }
-            node.id = msg["body"]["node_id"].as_str().unwrap().to_string();
-            let mut reply = json!({ "type":"init_ok" });
-            let _ = node
-                .send(&node.build_reply(msg["src"].as_str().unwrap(), &msg, &mut reply))
-                .map_err(|e| e.to_string());
+
+            if let Some(node_id) = msg["body"]["node_id"].as_str() {
+                node.id = node_id.to_string();
+            } else {
+                log::error!("ignoring invalid init message :(");
+                return;
+            }
+
+            if node
+                .send(&node.build_reply(
+                    msg["src"].as_str().unwrap(),
+                    msg,
+                    &mut json!({"type": "init_ok"}),
+                ))
+                .is_err()
+            {
+                log::error!("failed to send init_ok");
+            }
         }),
     );
     handlers.insert(
         String::from("topology"),
         Box::new(|node, msg| {
-            let topo = msg["body"]["topology"].as_object().unwrap();
+            let Some(topo) = msg["body"]["topology"].as_object() else {
+                log::error!("ignoring invalid topology message :(");
+                return;
+            };
             for k in topo.keys() {
-                node.topology.borrow_mut().insert(k.clone(), true);
+                node.topology.borrow_mut().insert(k.clone());
             }
-            let mut reply = json!({
-                "type": "topology_ok",
-            });
-            let _ = node
-                .send(&node.build_reply(msg["src"].as_str().unwrap(), &msg, &mut reply))
-                .map_err(|e| e.to_string());
+
+            if node
+                .send(&node.build_reply(
+                    msg["src"].as_str().unwrap(),
+                    msg,
+                    &mut json!({"type": "topology_ok"}),
+                ))
+                .is_err()
+            {
+                log::error!("failed to send topology_ok");
+            }
         }),
     );
 
@@ -81,9 +102,9 @@ impl Default for Node {
     fn default() -> Self {
         Node {
             id: String::new(),
-            stdout: RefCell::new(io::stdout()),
+            stdout: io::stdout(),
             values: HashSet::new(),
-            topology: RefCell::new(HashMap::new()),
+            topology: RefCell::new(HashSet::new()),
             handlers: build_default_handlers(),
         }
     }
@@ -91,11 +112,36 @@ impl Default for Node {
 
 impl Node {
     /// # Errors
+    /// - forwards `io` errors
+    #[allow(clippy::missing_panics_doc)] // TODO
+    pub fn serve(mut self) -> io::Result<()> {
+        let (tx, rx) = mpsc::channel::<String>();
+        thread::spawn(move || {
+            log::info!("starting message thread");
+            for msg in rx {
+                if let Err(e) = self.handle_msg(msg.as_str()) {
+                    log::error!("failed to handle message: {e}");
+                }
+            }
+        });
+
+        log::info!("starting listener loop");
+        loop {
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            log::info!("message: {input}");
+            if let Err(e) = tx.send(input) {
+                log::error!("{e}");
+            }
+        }
+    }
+
+    /// # Errors
     /// - forwards `serde_json` errors
     /// - forwards `io` errors
     pub fn send(&self, msg: &serde_json::Value) -> io::Result<()> {
         let json_str = serde_json::to_string(msg)?;
-        let mut writer = self.stdout.borrow_mut();
+        let mut writer = &self.stdout;
         writer.write_all(json_str.as_bytes())?;
         writer.write_all(b"\n")?;
         writer.flush()?;
@@ -124,43 +170,14 @@ impl Node {
         let msg: serde_json::Value = serde_json::from_str(raw_msg).map_err(|e| e.to_string())?;
         let msg_type = msg["body"]["type"].as_str().ok_or("missing type field")?;
 
+        // TODO: just `get` and call, without removing and reinserting
         let handler = self
             .handlers
             .remove(msg_type)
             .ok_or(format!("handler {} not found", msg["body"]["type"]))?;
-        handler(self, msg.clone());
+        handler(self, &msg);
         self.handlers.insert(msg_type.to_string(), handler);
+
         Ok(())
-    }
-
-    /// # Errors
-    /// - forwards `io` errors
-    #[allow(clippy::missing_panics_doc)] // TODO
-    pub fn serve(self) -> io::Result<()> {
-        let node = Arc::new(Mutex::new(self));
-        let (tx, rx) = mpsc::channel::<String>();
-        // this thread can be made to own the node, again. allowing for avoiding locking the entire
-        thread::spawn(move || {
-            log::info!("starting message thread");
-            for msg in rx {
-                let node = node.clone();
-                thread::spawn(move || {
-                    if let Err(e) = node.lock().unwrap().handle_msg(msg.as_str()) {
-                        log::error!("failed to handle message: {e}");
-                    }
-                });
-            }
-        });
-
-        // need to start another thread that runs the node swim gossip
-        log::info!("starting listener loop");
-        loop {
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            log::info!("message: {input}");
-            if let Err(e) = tx.send(input) {
-                log::error!("{e}");
-            }
-        }
     }
 }

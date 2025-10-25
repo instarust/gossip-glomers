@@ -9,7 +9,7 @@ fn main() -> io::Result<()> {
 
     let mut node = Node::default();
     node.handlers.insert(
-        "read".to_string(),
+        String::from("read"),
         Box::new(|node, msg| {
             let mut all_values: Vec<u64> = Vec::new();
             for val in &node.values {
@@ -20,12 +20,12 @@ fn main() -> io::Result<()> {
                 "messages": all_values,
             });
             let _ = node
-                .send(&node.build_reply(msg["src"].as_str().unwrap(), &msg, &mut reply))
+                .send(&node.build_reply(msg["src"].as_str().unwrap(), msg, &mut reply))
                 .map_err(|e| e.to_string());
         }),
     );
     node.handlers.insert(
-        "broadcast".to_string(),
+        String::from("broadcast"),
         Box::new(|node, msg| {
             // check if i had this value before, if i did. do nothing at all
             // if i didn't add it to the hashmap and send it to the others
@@ -36,7 +36,7 @@ fn main() -> io::Result<()> {
 
             node.values.insert(number);
             // send it to everyone else
-            for n in node.topology.borrow().keys() {
+            for n in node.topology.borrow().iter() {
                 if *n == msg["src"] || *n == node.id {
                     continue;
                 }
@@ -51,7 +51,7 @@ fn main() -> io::Result<()> {
                 "type": "broadcast_ok",
             });
             let _ = node
-                .send(&node.build_reply(msg["src"].as_str().unwrap(), &msg, &mut reply))
+                .send(&node.build_reply(msg["src"].as_str().unwrap(), msg, &mut reply))
                 .map_err(|e| e.to_string());
         }),
     );

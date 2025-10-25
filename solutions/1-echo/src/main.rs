@@ -9,7 +9,7 @@ fn main() -> io::Result<()> {
 
     let mut node = Node::default();
     node.handlers.insert(
-        "echo".to_string(),
+        String::from("echo"),
         Box::new(|node, msg| {
             let echo = msg["body"]["echo"].as_str().unwrap();
             let mut reply = json!({
@@ -17,7 +17,7 @@ fn main() -> io::Result<()> {
                 "echo": echo,
             });
             let _ = node
-                .send(&node.build_reply(msg["src"].as_str().unwrap(), &msg, &mut reply))
+                .send(&node.build_reply(msg["src"].as_str().unwrap(), msg, &mut reply))
                 .map_err(|e| e.to_string());
         }),
     );
