@@ -46,7 +46,7 @@ async fn main() -> io::Result<()> {
                     return;
                 }
                 node.values.insert(number);
-                let _ = Node::send(&node.build_reply("broadcast_ok", &msg, json!("")).unwrap())
+                let _ = Node::send(&node.build_reply("broadcast_ok", &msg, json!({})).unwrap())
                     .map_err(|e| e.to_string());
                 let node_id = node.id.clone();
                 let all_nodes: Vec<_> = { node.topology.iter().cloned().collect() };
