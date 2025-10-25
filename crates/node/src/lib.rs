@@ -47,6 +47,7 @@ impl fmt::Debug for Node {
 }
 
 /// Returns a map of default message handlers for the node.
+/// # Panics
 /// The handlers created by this function may panic if the mutex on the node is poisoned.
 #[must_use]
 pub fn build_default_handlers() -> HashMap<String, FnHandler> {
@@ -222,9 +223,9 @@ impl Node {
 
     /// # Errors
     /// - forwards `serde_json` errors
-    /// - returns an error if `msg["body"]["type"]` is not a string
     /// - returns an error if the message type is not found in the handlers map
     /// # Panics
+    /// - Panics if `msg["body"]["type"]` is not a string
     /// - panics if the mutex on `node_arc` is poisoned
     pub async fn handle_msg(
         node_arc: Arc<Mutex<Node>>,
@@ -240,7 +241,7 @@ impl Node {
             callback();
         }
 
-        let msg_type = msg["body"]["type"].as_str().map_err(|e| e.to_string())?;
+        let msg_type = msg["body"]["type"].as_str().unwrap();
         let handler = handlers_map
             .get(msg_type)
             .ok_or(format!("handler {msg_type} not found"))?;
