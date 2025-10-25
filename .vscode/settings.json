@@ -2,7 +2,10 @@
   "rust-analyzer.linkedProjects": [
     "./Cargo.toml"
   ],
+  "rust-analyzer.check.command": "clippy",
   "rust-analyzer.cargo.allTargets": true,
   "rust-analyzer.checkOnSave": true,
   "editor.formatOnSave": true,
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000
 }

@@ -1,67 +1,77 @@
-use std::io;
+use std::{
+    collections::HashMap,
+    io,
+    sync::{Arc, Mutex},
+};
 
 use serde_json::json;
 
-use node::Node;
+use node::{Node, build_default_handlers};
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     env_logger::init();
 
-    let mut node = Node::default();
-    node.handlers.insert(
+    let node_mutex = Arc::new(Mutex::new(Node::default()));
+    let mut handlers: HashMap<String, node::FnHandler> = build_default_handlers();
+    handlers.insert(
         String::from("read"),
-        Box::new(|node, msg| {
-            let mut all_values: Vec<u64> = Vec::new();
-            for val in &node.values {
-                all_values.push(*val);
-            }
+        Arc::new(|node_mutex, msg| {
+            Box::pin(async move {
+                let node = node_mutex.lock().unwrap();
+                let mut all_values: Vec<u64> = Vec::new();
+                for val in &node.values {
+                    all_values.push(*val);
+                }
 
-            let Some(reply) = node.build_reply("read_ok", msg, json!({"messages": all_values}))
-            else {
-                return;
-            };
+                let Some(reply) =
+                    node.build_reply("read_ok", &msg, json!({"messages": all_values}))
+                else {
+                    return;
+                };
 
-            if let Err(e) = node.send(&reply) {
-                log::error!("failed to send read_ok: {e}");
-            }
+                if let Err(e) = Node::send(&reply) {
+                    log::error!("failed to send read_ok: {e}");
+                }
+            })
         }),
     );
-    node.handlers.insert(
+    handlers.insert(
         String::from("broadcast"),
-        Box::new(|node, msg| {
-            // check if i had this value before, if i did. do nothing at all
-            // if i didn't add it to the hashmap and send it to the others
-            let number = msg["body"]["message"].as_u64().unwrap();
-            if node.values.contains(&number) {
-                return;
-            }
-
-            node.values.insert(number);
-            // send it to everyone else
-            for n in node.topology.borrow().iter() {
-                if *n == msg["src"] || *n == node.id {
-                    continue;
+        Arc::new(|node_mutex, msg| {
+            Box::pin(async move {
+                let mut node = node_mutex.lock().unwrap();
+                let number = msg["body"]["message"].as_u64().unwrap();
+                if node.values.contains(&number) {
+                    return;
                 }
-                let new_msg = json!({
-                    "src": node.id,
-                    "dest": n,
-                    "body": msg["body"],
-                });
+                node.values.insert(number);
+                let _ = Node::send(&node.build_reply("broadcast_ok", &msg, json!({})).unwrap())
+                    .map_err(|e| e.to_string());
+                let node_id = node.id.clone();
+                let all_nodes: Vec<_> = { node.topology.iter().cloned().collect() };
+                drop(node);
 
-                if let Err(e) = node.send(&new_msg) {
-                    log::error!("failed to send broadcast message to {n}: {e}");
+                // send it to everyone else
+                for n in all_nodes {
+                    if *n == msg["src"] || *n == node_id {
+                        continue;
+                    }
+                    let new_msg = json!({
+                        "src": node_id,
+                        "dest": n,
+                        "body": msg["body"],
+                    });
+                    let node_mut = node_mutex.clone();
+                    let _ = Node::send_synchronous(
+                        &node_mut,
+                        new_msg.clone(),
+                        tokio::time::Duration::from_millis(500),
+                    );
                 }
-            }
-
-            let Some(reply) = node.build_reply("broadcast_ok", msg, json!({})) else {
-                return;
-            };
-
-            if let Err(e) = node.send(&reply) {
-                log::error!("failed to send broadcast_ok: {e}");
-            }
+            })
         }),
     );
 
-    node.serve()
+    Node::serve(node_mutex, handlers).await
 }

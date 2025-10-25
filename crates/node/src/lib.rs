@@ -1,37 +1,43 @@
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
     fmt,
-    io::{self, Stdout, Write},
-    sync::mpsc,
-    thread,
+    io::{self, Write},
+    pin::Pin,
+    sync::{Arc, Mutex},
 };
+
+use tokio::task;
 
 use serde_json::json;
 
-pub type FnHandler = Box<dyn Fn(&mut Node, &serde_json::Value) + Send + Sync>;
+pub type FnHandler = Arc<
+    dyn Fn(Arc<Mutex<Node>>, serde_json::Value) -> Pin<Box<dyn Future<Output = ()> + Send>>
+        + Send
+        + Sync,
+>;
+#[derive(Default)]
 pub struct Node {
-    stdout: Stdout,
     pub id: String,
     pub values: HashSet<u64>,
-    pub topology: RefCell<HashSet<String>>,
-    pub handlers: HashMap<String, FnHandler>,
+    pub callbacks: HashMap<u64, Box<dyn FnOnce() + Send + Sync>>,
+    pub topology: HashSet<String>,
+    pub msg_count: u64,
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Node")
             .field("id", &self.id)
-            .field("stdout", &self.stdout)
             .field("values", &self.values)
-            .field("topology", &self.topology.borrow())
+            .field("topology", &self.topology)
+            .field("msg_count", &self.msg_count)
             .field(
-                "handlers",
+                "callbacks",
                 &format!(
-                    "{} handlers, keys: `{}`",
-                    self.handlers.len(),
-                    self.handlers
+                    "{} callbacks, keys: `{}`",
+                    self.callbacks.len(),
+                    self.callbacks
                         .keys()
-                        .cloned()
+                        .map(|k| { k.to_string() })
                         .collect::<Vec<String>>()
                         .join("`, `")
                 ),
@@ -40,80 +46,86 @@ impl fmt::Debug for Node {
     }
 }
 
+/// Returns a map of default message handlers for the node.
+/// # Panics
+/// The handlers created by this function may panic if the mutex on the node is poisoned.
 #[must_use]
 pub fn build_default_handlers() -> HashMap<String, FnHandler> {
     let mut handlers: HashMap<String, FnHandler> = HashMap::new();
 
     handlers.insert(
         String::from("init"),
-        Box::new(|node, msg| {
-            if !node.id.is_empty() {
-                return;
-            }
+        Arc::new(|node_mutex, msg| {
+            Box::pin(async move {
+                let mut node = node_mutex.lock().unwrap();
+                if !node.id.is_empty() {
+                    return;
+                }
 
-            if let Some(node_id) = msg["body"]["node_id"].as_str() {
-                node.id = node_id.to_string();
-            } else {
-                log::error!("ignoring invalid init message :(");
-                return;
-            }
+                if let Some(node_id) = msg["body"]["node_id"].as_str() {
+                    node.id = node_id.to_string();
+                } else {
+                    log::error!("ignoring invalid init message :(");
+                    return;
+                }
 
-            let Some(reply) = node.build_reply("init_ok", msg, json!({})) else {
-                return;
-            };
+                let Some(reply) = node.build_reply("init_ok", &msg, json!({})) else {
+                    return;
+                };
 
-            if let Err(e) = node.send(&reply) {
-                log::error!("failed to send init_ok: {e}");
-            }
+                if let Err(e) = Node::send(&reply) {
+                    log::error!("failed to send init_ok: {e}");
+                }
+            })
         }),
     );
     handlers.insert(
         String::from("topology"),
-        Box::new(|node, msg| {
-            let Some(topo) = msg["body"]["topology"].as_object() else {
-                log::error!("ignoring invalid topology message :(");
-                return;
-            };
-            for k in topo.keys() {
-                node.topology.borrow_mut().insert(k.clone());
-            }
+        Arc::new(|node_mutex, msg| {
+            Box::pin(async move {
+                let mut node = node_mutex.lock().unwrap();
+                let Some(topo) = msg["body"]["topology"].as_object() else {
+                    log::error!("ignoring invalid topology message :(");
+                    return;
+                };
+                for k in topo.keys() {
+                    node.topology.insert(k.clone());
+                }
 
-            let Some(reply) = node.build_reply("topology_ok", msg, json!({})) else {
-                return;
-            };
+                let Some(reply) = node.build_reply("topology_ok", &msg, json!({})) else {
+                    return;
+                };
 
-            if let Err(e) = node.send(&reply) {
-                log::error!("failed to send topology_ok: {e}");
-            }
+                if let Err(e) = Node::send(&reply) {
+                    log::error!("failed to send topology_ok: {e}");
+                }
+            })
         }),
     );
 
     handlers
 }
 
-impl Default for Node {
-    fn default() -> Self {
-        Node {
-            id: String::new(),
-            stdout: io::stdout(),
-            values: HashSet::new(),
-            topology: RefCell::new(HashSet::new()),
-            handlers: build_default_handlers(),
-        }
-    }
-}
-
 impl Node {
     /// # Errors
     /// - forwards `io` errors
-    pub fn serve(mut self) -> io::Result<()> {
-        let (tx, rx) = mpsc::channel::<String>();
-        thread::spawn(move || {
+    pub async fn serve(
+        node: Arc<Mutex<Node>>,
+        handlers: HashMap<String, FnHandler>,
+    ) -> io::Result<()> {
+        // 10 is an arbitrary value, the size doesn't actually matter (wink, wink)
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+
+        tokio::spawn(async move {
             log::info!("starting message thread");
-            for msg in rx {
-                if let Err(e) = self.handle_msg(msg.as_str()) {
-                    log::error!("failed to handle message: {e}");
-                }
+            while let Some(msg) = rx.recv().await {
+                let node_mut = node.clone();
+                let h = handlers.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = Node::handle_msg(node_mut, &h, msg).await {
+                        log::error!("failed to handle message: {e}");
+                    }
+                });
             }
         });
 
@@ -122,7 +134,7 @@ impl Node {
             let mut input = String::new();
             io::stdin().read_line(&mut input)?;
             log::info!("message: {input}");
-            if let Err(e) = tx.send(input) {
+            if let Err(e) = tx.send(input).await {
                 log::error!("{e}");
             }
         }
@@ -131,17 +143,16 @@ impl Node {
     /// # Errors
     /// - forwards `serde_json` errors
     /// - forwards `io` errors
-    pub fn send(&self, msg: &serde_json::Value) -> io::Result<()> {
+    pub fn send(msg: &serde_json::Value) -> io::Result<()> {
         let json_str = serde_json::to_string(msg)?;
-        let mut writer = &self.stdout;
+        let mut writer = std::io::stdout();
         writer.write_all(json_str.as_bytes())?;
         writer.write_all(b"\n")?;
         writer.flush()?;
         Ok(())
     }
 
-    /// the function returns no errors, but logs them instead, you're expected to ignore its
-    /// failures for convenience
+    #[must_use]
     pub fn build_reply(
         &self,
         r#type: &str,
@@ -164,19 +175,92 @@ impl Node {
     }
 
     /// # Errors
-    /// - "missing type field" if the message does not contain `.body.type`
-    /// - forwards `serde_json` errors as strings
-    pub fn handle_msg(&mut self, raw_msg: &str) -> Result<(), String> {
-        let msg: serde_json::Value = serde_json::from_str(raw_msg).map_err(|e| e.to_string())?;
-        let msg_type = msg["body"]["type"].as_str().ok_or("missing `type` field")?;
+    /// - forwards `serde_json` errors
+    /// - forwards `io` errors
+    /// # Panics
+    /// This function will panic if the mutex on `node_arc` is poisoned.
+    pub fn send_synchronous(
+        node_mut: &Arc<Mutex<Node>>,
+        mut msg: serde_json::Value,
+        message_timout: tokio::time::Duration,
+    ) -> io::Result<()> {
+        let mut node = node_mut.lock().unwrap();
+        node.msg_count += 1;
+        let msg_count = node.msg_count;
+        msg["body"]["id"] = msg_count.into();
 
-        // TODO: just `get` and call, without removing and reinserting if possible
-        let handler = self
-            .handlers
-            .remove(msg_type)
+        log::info!(
+            "{node_id}: using message number {msg_count} for destination {dest} and payload {payload}",
+            dest = msg["dest"].as_str().unwrap(),
+            payload = msg["body"]["message"].as_u64().unwrap(),
+            node_id = node.id
+        );
+
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
+
+        // register the callback
+        node.callbacks.insert(
+            msg_count,
+            Box::new(move || {
+                let _ = tx.send(());
+            }),
+        );
+
+        // initial send
+        Node::send(&msg)?;
+
+        let node_mut_copy = node_mut.clone();
+        task::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut rx => {
+                        break;
+                    },
+
+                    () = tokio::time::sleep(message_timout) => {
+                        let node = node_mut_copy.lock().unwrap();
+                        log::info!("node {}: receiving a response from {} timed out, sending again", node.id, msg["dest"].as_str().unwrap());
+                        if let Err(e) = Node::send(&msg) {
+                            log::error!("failed to send echo_ok: {e}");
+                        }
+                    },
+                }
+            }
+
+            log::info!(
+                "node {dest} received message {payload}",
+                dest = msg["dest"].as_str().unwrap(),
+                payload = msg["body"]["message"].as_u64().unwrap(),
+            );
+        });
+        Ok(())
+    }
+
+    /// # Errors
+    /// - forwards `serde_json` errors
+    /// - returns an error if the message type is not found in the handlers map
+    /// # Panics
+    /// - Panics if `msg["body"]["type"]` is not a string
+    /// - panics if the mutex on `node_arc` is poisoned
+    pub async fn handle_msg(
+        node_arc: Arc<Mutex<Node>>,
+        handlers_map: &HashMap<String, FnHandler>,
+        raw_msg: String,
+    ) -> Result<(), String> {
+        let msg: serde_json::Value = serde_json::from_str(&raw_msg).map_err(|e| e.to_string())?;
+
+        if let Some(callback) = msg["body"]["id"]
+            .as_u64()
+            .and_then(|id| node_arc.lock().ok()?.callbacks.remove(&id))
+        {
+            callback();
+        }
+
+        let msg_type = msg["body"]["type"].as_str().unwrap();
+        let handler = handlers_map
+            .get(msg_type)
             .ok_or(format!("handler {msg_type} not found"))?;
-        handler(self, &msg);
-        self.handlers.insert(msg_type.to_string(), handler);
+        handler(node_arc, msg).await;
 
         Ok(())
     }
