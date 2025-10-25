@@ -1,0 +1,4 @@
+[toolchain]
+channel = "nightly-2025-10-24"
+profile = "default" # doesn't install `rust-analyzer`
+# docs recommends relying on the tools bundled with the VSCode extension instead
