@@ -63,7 +63,11 @@ async fn main() -> io::Result<()> {
                         "body": msg["body"],
                     });
                     let node_mut = node_mutex.clone();
-                    let _ = Node::send_synchronous(node_mut, new_msg.to_owned());
+                    let _ = Node::send_synchronous(
+                        node_mut,
+                        new_msg.to_owned(),
+                        tokio::time::Duration::from_millis(500),
+                    );
                 }
             })
         }),

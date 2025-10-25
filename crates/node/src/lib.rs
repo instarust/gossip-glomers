@@ -138,6 +138,7 @@ impl Node {
         node: Arc<Mutex<Node>>,
         handlers: HashMap<String, FnHandler>,
     ) -> io::Result<()> {
+        // 10 is an arbitrary value, the size doesn't actually matter (wink, wink)
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
 
         tokio::spawn(async move {
@@ -199,7 +200,11 @@ impl Node {
         Some(json!({"src": self.id, "dest": dest, "body": body}))
     }
 
-    pub fn send_synchronous(node_mut: Arc<Mutex<Node>>, mut msg: Value) -> io::Result<()> {
+    pub fn send_synchronous(
+        node_mut: Arc<Mutex<Node>>,
+        mut msg: Value,
+        message_timout: tokio::time::Duration,
+    ) -> io::Result<()> {
         let mut node = node_mut.lock().unwrap();
         node.msg_count += 1;
         let msg_count = node.msg_count;
@@ -226,7 +231,7 @@ impl Node {
                         break;
                     },
 
-                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(500)) => {
+                    _ = tokio::time::sleep(message_timout) => {
                         let node = node_mut_copy.lock().unwrap();
                         log::info!("node {}: receiving a response from {} timed out, sending again", node.id, msg["dest"].as_str().unwrap());
                         let _ = Node::send(&msg);
