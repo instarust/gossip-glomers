@@ -6,14 +6,14 @@ use std::{
 
 use serde_json::json;
 
-use node::Node;
+use node::{Node, build_default_handlers};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     env_logger::init();
 
     let node_mutex = Arc::new(Mutex::new(Node::default()));
-    let mut handlers: HashMap<String, node::FnHandler> = HashMap::new();
+    let mut handlers: HashMap<String, node::FnHandler> = build_default_handlers();
     handlers.insert(
         String::from("read"),
         Arc::new(|node_mutex, msg| {

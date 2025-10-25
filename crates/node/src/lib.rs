@@ -187,7 +187,15 @@ impl Node {
         let mut node = node_mut.lock().unwrap();
         node.msg_count += 1;
         let msg_count = node.msg_count;
-        msg["body"]["msg_id"] = msg_count.into();
+        msg["body"]["id"] = msg_count.into();
+
+        log::info!(
+            "{node_id}: using message number {msg_count} for destination {dest} and payload {payload}",
+            dest = msg["dest"].as_str().unwrap(),
+            payload = msg["body"]["message"].as_u64().unwrap(),
+            node_id = node.id
+        );
+
         let (tx, mut rx) = tokio::sync::oneshot::channel::<()>();
 
         // register the callback
@@ -212,11 +220,18 @@ impl Node {
                     () = tokio::time::sleep(message_timout) => {
                         let node = node_mut_copy.lock().unwrap();
                         log::info!("node {}: receiving a response from {} timed out, sending again", node.id, msg["dest"].as_str().unwrap());
-                        let _ = Node::send(&msg);
+                        if let Err(e) = Node::send(&msg) {
+                            log::error!("failed to send echo_ok: {e}");
+                        }
                     },
                 }
             }
-            log::info!("broadcast exiting");
+
+            log::info!(
+                "node {dest} received message {payload}",
+                dest = msg["dest"].as_str().unwrap(),
+                payload = msg["body"]["message"].as_u64().unwrap(),
+            );
         });
         Ok(())
     }
@@ -234,7 +249,7 @@ impl Node {
     ) -> Result<(), String> {
         let msg: serde_json::Value = serde_json::from_str(&raw_msg).map_err(|e| e.to_string())?;
 
-        if let Some(callback) = msg["body"]["msg_id"]
+        if let Some(callback) = msg["body"]["id"]
             .as_u64()
             .and_then(|id| node_arc.lock().ok()?.callbacks.remove(&id))
         {
