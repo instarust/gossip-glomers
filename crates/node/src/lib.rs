@@ -41,7 +41,6 @@ impl fmt::Debug for Node {
 }
 
 #[must_use]
-#[allow(clippy::missing_panics_doc)] // TODO
 pub fn build_default_handlers() -> HashMap<String, FnHandler> {
     let mut handlers: HashMap<String, FnHandler> = HashMap::new();
 
@@ -59,15 +58,12 @@ pub fn build_default_handlers() -> HashMap<String, FnHandler> {
                 return;
             }
 
-            if node
-                .send(&node.build_reply(
-                    msg["src"].as_str().unwrap(),
-                    msg,
-                    &mut json!({"type": "init_ok"}),
-                ))
-                .is_err()
-            {
-                log::error!("failed to send init_ok");
+            let Some(reply) = node.build_reply("init_ok", msg, json!({})) else {
+                return;
+            };
+
+            if let Err(e) = node.send(&reply) {
+                log::error!("failed to send init_ok: {e}");
             }
         }),
     );
@@ -82,15 +78,12 @@ pub fn build_default_handlers() -> HashMap<String, FnHandler> {
                 node.topology.borrow_mut().insert(k.clone());
             }
 
-            if node
-                .send(&node.build_reply(
-                    msg["src"].as_str().unwrap(),
-                    msg,
-                    &mut json!({"type": "topology_ok"}),
-                ))
-                .is_err()
-            {
-                log::error!("failed to send topology_ok");
+            let Some(reply) = node.build_reply("topology_ok", msg, json!({})) else {
+                return;
+            };
+
+            if let Err(e) = node.send(&reply) {
+                log::error!("failed to send topology_ok: {e}");
             }
         }),
     );
@@ -113,7 +106,6 @@ impl Default for Node {
 impl Node {
     /// # Errors
     /// - forwards `io` errors
-    #[allow(clippy::missing_panics_doc)] // TODO
     pub fn serve(mut self) -> io::Result<()> {
         let (tx, rx) = mpsc::channel::<String>();
         thread::spawn(move || {
@@ -148,19 +140,27 @@ impl Node {
         Ok(())
     }
 
-    #[allow(clippy::missing_panics_doc)] // TODO
+    /// the function returns no errors, but logs them instead, you're expected to ignore its
+    /// failures for convenience
     pub fn build_reply(
         &self,
-        dest: &str,
+        r#type: &str,
         msg: &serde_json::Value,
-        body: &mut serde_json::Value,
-    ) -> serde_json::Value {
-        body["in_reply_to"] = msg["body"]["msg_id"].as_u64().unwrap().into();
-        json!({
-            "src": self.id,
-            "dest": dest,
-            "body": body,
-        })
+        mut body: serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        let Some(dest) = msg["src"].as_str() else {
+            log::error!("init message missing `src` field, cannot reply");
+            return None;
+        };
+        let Some(msg_id) = msg["body"]["msg_id"].as_u64() else {
+            log::error!("couldn't construct reply to `{msg}`: missing `.body.msg_id` field");
+            return None;
+        };
+
+        body["type"] = r#type.into();
+        body["in_reply_to"] = msg_id.into();
+
+        Some(json!({"src": self.id, "dest": dest, "body": body}))
     }
 
     /// # Errors
@@ -168,13 +168,13 @@ impl Node {
     /// - forwards `serde_json` errors as strings
     pub fn handle_msg(&mut self, raw_msg: &str) -> Result<(), String> {
         let msg: serde_json::Value = serde_json::from_str(raw_msg).map_err(|e| e.to_string())?;
-        let msg_type = msg["body"]["type"].as_str().ok_or("missing type field")?;
+        let msg_type = msg["body"]["type"].as_str().ok_or("missing `type` field")?;
 
-        // TODO: just `get` and call, without removing and reinserting
+        // TODO: just `get` and call, without removing and reinserting if possible
         let handler = self
             .handlers
             .remove(msg_type)
-            .ok_or(format!("handler {} not found", msg["body"]["type"]))?;
+            .ok_or(format!("handler {msg_type} not found"))?;
         handler(self, &msg);
         self.handlers.insert(msg_type.to_string(), handler);
 

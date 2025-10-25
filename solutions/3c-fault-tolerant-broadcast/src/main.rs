@@ -15,13 +15,15 @@ fn main() -> io::Result<()> {
             for val in &node.values {
                 all_values.push(*val);
             }
-            let mut reply = json!({
-                "type": "read_ok",
-                "messages": all_values,
-            });
-            let _ = node
-                .send(&node.build_reply(msg["src"].as_str().unwrap(), msg, &mut reply))
-                .map_err(|e| e.to_string());
+
+            let Some(reply) = node.build_reply("read_ok", msg, json!({"messages": all_values}))
+            else {
+                return;
+            };
+
+            if let Err(e) = node.send(&reply) {
+                log::error!("failed to send read_ok: {e}");
+            }
         }),
     );
     node.handlers.insert(
@@ -45,14 +47,19 @@ fn main() -> io::Result<()> {
                     "dest": n,
                     "body": msg["body"],
                 });
-                let _ = node.send(&new_msg).map_err(|e| e.to_string());
+
+                if let Err(e) = node.send(&new_msg) {
+                    log::error!("failed to send broadcast message to {n}: {e}");
+                }
             }
-            let mut reply = json!({
-                "type": "broadcast_ok",
-            });
-            let _ = node
-                .send(&node.build_reply(msg["src"].as_str().unwrap(), msg, &mut reply))
-                .map_err(|e| e.to_string());
+
+            let Some(reply) = node.build_reply("broadcast_ok", msg, json!({})) else {
+                return;
+            };
+
+            if let Err(e) = node.send(&reply) {
+                log::error!("failed to send broadcast_ok: {e}");
+            }
         }),
     );
 
