@@ -6,6 +6,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use rand::Rng;
+
 use tokio::task;
 
 use serde_json::json;
@@ -15,13 +17,25 @@ pub type FnHandler = Arc<
         + Send
         + Sync,
 >;
-#[derive(Default)]
 pub struct Node {
     pub id: String,
     pub values: HashSet<u64>,
     pub callbacks: HashMap<u64, Box<dyn FnOnce() + Send + Sync>>,
     pub topology: HashSet<String>,
     pub msg_count: u64,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        let mut rng = rand::thread_rng();
+        Self {
+            id: String::default(),
+            values: HashSet::default(),
+            callbacks: HashMap::default(),
+            topology: HashSet::default(),
+            msg_count: rng.gen_range(0..10000),
+        }
+    }
 }
 impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

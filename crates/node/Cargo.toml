@@ -9,6 +9,7 @@ tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
 log.workspace = true
 env_logger.workspace = true
+rand = "0.8"
 
 [lints]
 workspace = true
