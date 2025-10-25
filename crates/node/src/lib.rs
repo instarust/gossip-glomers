@@ -8,8 +8,6 @@ use std::{
 
 use tokio::task;
 
-use serde_json::Value;
-
 use serde_json::json;
 
 pub type FnHandler = Arc<
@@ -201,7 +199,7 @@ impl Node {
 
     pub fn send_synchronous(
         node_mut: Arc<Mutex<Node>>,
-        mut msg: Value,
+        mut msg: serde_json::Value,
         message_timout: tokio::time::Duration,
     ) -> io::Result<()> {
         let mut node = node_mut.lock().unwrap();
@@ -246,7 +244,7 @@ impl Node {
         handlers_map: &HashMap<String, FnHandler>,
         raw_msg: String,
     ) -> Result<(), String> {
-        let msg: Value = serde_json::from_str(&raw_msg).map_err(|e| e.to_string())?;
+        let msg: serde_json::Value = serde_json::from_str(&raw_msg).map_err(|e| e.to_string())?;
 
         if let Some(id) = msg["body"]["msg_id"].as_u64() {
             if let Some(callback) = node_arc.lock().unwrap().callbacks.remove(&id) {
