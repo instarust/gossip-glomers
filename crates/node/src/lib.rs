@@ -20,7 +20,6 @@ pub struct Node {
     pub values: HashSet<u64>,
     pub callbacks: HashMap<u64, Box<dyn FnOnce() + Send + Sync>>,
     pub topology: HashSet<String>,
-    pub handlers: HashMap<String, FnHandler>,
     pub msg_count: u64,
 }
 impl fmt::Debug for Node {
@@ -38,18 +37,6 @@ impl fmt::Debug for Node {
                     self.callbacks
                         .keys()
                         .map(|k| { k.to_string() })
-                        .collect::<Vec<String>>()
-                        .join("`, `")
-                ),
-            )
-            .field(
-                "handlers",
-                &format!(
-                    "{} handlers, keys: `{}`",
-                    self.handlers.len(),
-                    self.handlers
-                        .keys()
-                        .cloned()
                         .collect::<Vec<String>>()
                         .join("`, `")
                 ),
@@ -123,7 +110,6 @@ impl Default for Node {
             callbacks: HashMap::new(),
             topology: HashSet::new(),
             msg_count: 0,
-            handlers: build_default_handlers(),
         }
     }
 }
