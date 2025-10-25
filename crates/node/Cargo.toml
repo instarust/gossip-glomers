@@ -4,12 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
 log.workspace = true
-env_logger.workspace = true
-rand = "0.8"
+rand.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 [lints]
 workspace = true

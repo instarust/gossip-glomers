@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 node.workspace = true
 
-serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
 log.workspace = true

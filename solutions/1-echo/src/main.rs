@@ -4,14 +4,14 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 
-use node::Node;
+use node::{Node, build_default_handlers};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     env_logger::init();
 
     let node_mutex = Arc::new(Mutex::new(Node::default()));
-    let mut handlers = node::build_default_handlers();
+    let mut handlers = build_default_handlers();
     handlers.insert(
         String::from("echo"),
         Arc::new(|node_mutex, msg| {

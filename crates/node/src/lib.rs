@@ -27,13 +27,13 @@ pub struct Node {
 
 impl Default for Node {
     fn default() -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         Self {
             id: String::default(),
             values: HashSet::default(),
             callbacks: HashMap::default(),
             topology: HashSet::default(),
-            msg_count: rng.gen_range(0..10000),
+            msg_count: rng.random_range(0..10000),
         }
     }
 }
@@ -166,6 +166,7 @@ impl Node {
         Ok(())
     }
 
+    /// errors logged internally for convenience
     #[must_use]
     pub fn build_reply(
         &self,
