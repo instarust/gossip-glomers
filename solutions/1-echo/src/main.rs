@@ -12,11 +12,11 @@ async fn main() -> io::Result<()> {
 
     let mut handlers = build_default_handlers();
     handlers.insert(
-        String::from("echo"),
+        "echo",
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let node = node_mutex.lock().unwrap();
-                let Some(echo) = msg["body"]["echo"].as_str() else {
+                let Some(echo) = msg.body["echo"].as_str() else {
                     log::error!("ignoring invalid echo message :(");
                     return;
                 };

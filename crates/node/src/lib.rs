@@ -7,16 +7,13 @@ use std::{
 };
 
 use rand::Rng;
-
+use serde_json::json;
 use tokio::task;
 
-use serde_json::json;
-
 pub type FnHandler = Arc<
-    dyn Fn(Arc<Mutex<Node>>, serde_json::Value) -> Pin<Box<dyn Future<Output = ()> + Send>>
-        + Send
-        + Sync,
+    dyn Fn(Arc<Mutex<Node>>, Message) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
 >;
+type HandlersMap<'str> = HashMap<&'str str, FnHandler>;
 pub struct Node {
     pub id: String,
     pub values: HashSet<u64>,
@@ -25,15 +22,21 @@ pub struct Node {
     pub msg_count: u64,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+pub struct Message {
+    pub src: String,
+    pub dest: String,
+    pub body: serde_json::Value,
+}
+
 impl Default for Node {
     fn default() -> Self {
-        let mut rng = rand::rng();
         Self {
             id: String::default(),
             values: HashSet::default(),
             callbacks: HashMap::default(),
             topology: HashSet::default(),
-            msg_count: rng.random_range(0..10000),
+            msg_count: rand::rng().random_range(0..10000),
         }
     }
 }
@@ -64,11 +67,10 @@ impl fmt::Debug for Node {
 /// # Panics
 /// The handlers created by this function may panic if the mutex on the node is poisoned.
 #[must_use]
-pub fn build_default_handlers() -> HashMap<String, FnHandler> {
-    let mut handlers = HashMap::<String, FnHandler>::new();
-
+pub fn build_default_handlers() -> HandlersMap<'static> {
+    let mut handlers = HandlersMap::new();
     handlers.insert(
-        String::from("init"),
+        "init",
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let mut node = node_mutex.lock().unwrap();
@@ -76,7 +78,7 @@ pub fn build_default_handlers() -> HashMap<String, FnHandler> {
                     return;
                 }
 
-                if let Some(node_id) = msg["body"]["node_id"].as_str() {
+                if let Some(node_id) = msg.body["node_id"].as_str() {
                     node.id = node_id.to_string();
                 } else {
                     log::error!("ignoring invalid init message :(");
@@ -93,40 +95,13 @@ pub fn build_default_handlers() -> HashMap<String, FnHandler> {
             })
         }),
     );
-    handlers.insert(
-        String::from("topology"),
-        Arc::new(|node_mutex, msg| {
-            Box::pin(async move {
-                let mut node = node_mutex.lock().unwrap();
-                let Some(topo) = msg["body"]["topology"].as_object() else {
-                    log::error!("ignoring invalid topology message :(");
-                    return;
-                };
-                for k in topo.keys() {
-                    node.topology.insert(k.clone());
-                }
-
-                let Some(reply) = node.build_reply("topology_ok", &msg, json!({})) else {
-                    return;
-                };
-
-                if let Err(e) = Node::send(&reply) {
-                    log::error!("failed to send topology_ok: {e}");
-                }
-            })
-        }),
-    );
-
     handlers
 }
 
 impl Node {
     /// # Errors
     /// - forwards `io` errors
-    pub async fn serve(
-        node: Arc<Mutex<Node>>,
-        handlers: HashMap<String, FnHandler>,
-    ) -> io::Result<()> {
+    pub async fn serve(node: Arc<Mutex<Node>>, handlers: HandlersMap<'static>) -> io::Result<()> {
         // 10 is an arbitrary value, the size doesn't actually matter (wink, wink)
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
 
@@ -157,7 +132,7 @@ impl Node {
     /// # Errors
     /// - forwards `serde_json` errors
     /// - forwards `io` errors
-    pub fn send(msg: &serde_json::Value) -> io::Result<()> {
+    pub fn send(msg: &Message) -> io::Result<()> {
         let json_str = serde_json::to_string(msg)?;
         let mut writer = std::io::stdout();
         writer.write_all(json_str.as_bytes())?;
@@ -171,22 +146,22 @@ impl Node {
     pub fn build_reply(
         &self,
         r#type: &str,
-        msg: &serde_json::Value,
+        msg: &Message,
         mut body: serde_json::Value,
-    ) -> Option<serde_json::Value> {
-        let Some(dest) = msg["src"].as_str() else {
-            log::error!("init message missing `src` field, cannot reply");
-            return None;
-        };
-        let Some(msg_id) = msg["body"]["msg_id"].as_u64() else {
-            log::error!("couldn't construct reply to `{msg}`: missing `.body.msg_id` field");
+    ) -> Option<Message> {
+        let Some(msg_id) = msg.body["msg_id"].as_u64() else {
+            log::error!("couldn't construct reply to `{msg:?}`: missing `.body.msg_id` field");
             return None;
         };
 
         body["type"] = r#type.into();
         body["in_reply_to"] = msg_id.into();
 
-        Some(json!({"src": self.id, "dest": dest, "body": body}))
+        Some(Message {
+            src: self.id.clone(),
+            dest: msg.src.clone(),
+            body,
+        })
     }
 
     /// # Errors
@@ -196,18 +171,18 @@ impl Node {
     /// This function will panic if the mutex on `node_arc` is poisoned.
     pub fn send_synchronous(
         node_mut: &Arc<Mutex<Node>>,
-        mut msg: serde_json::Value,
+        mut msg: Message,
         message_timout: tokio::time::Duration,
     ) -> io::Result<()> {
         let mut node = node_mut.lock().unwrap();
         node.msg_count += 1;
         let msg_count = node.msg_count;
-        msg["body"]["id"] = msg_count.into();
+        msg.body["id"] = msg_count.into();
 
         log::info!(
             "{node_id}: using message number {msg_count} for destination {dest} and payload {payload}",
-            dest = msg["dest"].as_str().unwrap(),
-            payload = msg["body"]["message"].as_u64().unwrap(),
+            dest = msg.dest,
+            payload = msg.body["message"].as_u64().unwrap(),
             node_id = node.id
         );
 
@@ -217,7 +192,7 @@ impl Node {
         node.callbacks.insert(
             msg_count,
             Box::new(move || {
-                let _ = tx.send(());
+                _ = tx.send(());
             }),
         );
 
@@ -234,7 +209,7 @@ impl Node {
 
                     () = tokio::time::sleep(message_timout) => {
                         let node = node_mut_copy.lock().unwrap();
-                        log::info!("node {}: receiving a response from {} timed out, sending again", node.id, msg["dest"].as_str().unwrap());
+                        log::info!("node {}: receiving a response from {} timed out, sending again", node.id, msg.dest);
                         if let Err(e) = Node::send(&msg) {
                             log::error!("failed to send echo_ok: {e}");
                         }
@@ -244,8 +219,8 @@ impl Node {
 
             log::info!(
                 "node {dest} received message {payload}",
-                dest = msg["dest"].as_str().unwrap(),
-                payload = msg["body"]["message"].as_u64().unwrap(),
+                dest = msg.dest,
+                payload = msg.body["message"].as_u64().unwrap(),
             );
         });
         Ok(())
@@ -259,19 +234,19 @@ impl Node {
     /// - panics if the mutex on `node_arc` is poisoned
     pub async fn handle_msg(
         node_arc: Arc<Mutex<Node>>,
-        handlers_map: &HashMap<String, FnHandler>,
+        handlers_map: &HandlersMap<'_>,
         raw_msg: String,
     ) -> Result<(), String> {
-        let msg = serde_json::from_str::<serde_json::Value>(&raw_msg).map_err(|e| e.to_string())?;
+        let msg = serde_json::from_str::<Message>(&raw_msg).map_err(|e| e.to_string())?;
 
-        if let Some(callback) = msg["body"]["id"]
+        if let Some(callback) = msg.body["id"]
             .as_u64()
             .and_then(|id| node_arc.lock().ok()?.callbacks.remove(&id))
         {
             callback();
         }
 
-        let msg_type = msg["body"]["type"].as_str().unwrap();
+        let msg_type = msg.body["type"].as_str().unwrap();
         let handler = handlers_map
             .get(msg_type)
             .ok_or(format!("handler {msg_type} not found"))?;
