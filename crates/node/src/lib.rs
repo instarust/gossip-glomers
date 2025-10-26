@@ -65,7 +65,7 @@ impl fmt::Debug for Node {
 /// The handlers created by this function may panic if the mutex on the node is poisoned.
 #[must_use]
 pub fn build_default_handlers() -> HashMap<String, FnHandler> {
-    let mut handlers: HashMap<String, FnHandler> = HashMap::new();
+    let mut handlers = HashMap::<String, FnHandler>::new();
 
     handlers.insert(
         String::from("init"),
@@ -262,7 +262,7 @@ impl Node {
         handlers_map: &HashMap<String, FnHandler>,
         raw_msg: String,
     ) -> Result<(), String> {
-        let msg: serde_json::Value = serde_json::from_str(&raw_msg).map_err(|e| e.to_string())?;
+        let msg = serde_json::from_str::<serde_json::Value>(&raw_msg).map_err(|e| e.to_string())?;
 
         if let Some(callback) = msg["body"]["id"]
             .as_u64()

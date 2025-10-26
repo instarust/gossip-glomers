@@ -10,7 +10,6 @@ use node::{Node, build_default_handlers};
 async fn main() -> io::Result<()> {
     env_logger::init();
 
-    let node_mutex = Arc::new(Mutex::new(Node::default()));
     let mut handlers = build_default_handlers();
     handlers.insert(
         String::from("echo"),
@@ -33,5 +32,6 @@ async fn main() -> io::Result<()> {
         }),
     );
 
+    let node_mutex = Arc::new(Mutex::new(Node::default()));
     Node::serve(node_mutex, handlers).await
 }

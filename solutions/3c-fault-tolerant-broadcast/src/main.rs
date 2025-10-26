@@ -11,14 +11,13 @@ use node::{Node, build_default_handlers};
 async fn main() -> io::Result<()> {
     env_logger::init();
 
-    let node_mutex = Arc::new(Mutex::new(Node::default()));
     let mut handlers = build_default_handlers();
     handlers.insert(
         String::from("read"),
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let node = node_mutex.lock().unwrap();
-                let mut all_values: Vec<u64> = Vec::new();
+                let mut all_values = Vec::<_>::new();
                 for val in &node.values {
                     all_values.push(*val);
                 }
@@ -48,7 +47,7 @@ async fn main() -> io::Result<()> {
                 let _ = Node::send(&node.build_reply("broadcast_ok", &msg, json!({})).unwrap())
                     .map_err(|e| e.to_string());
                 let node_id = node.id.clone();
-                let all_nodes: Vec<_> = { node.topology.iter().cloned().collect() };
+                let all_nodes = node.topology.iter().cloned().collect::<Vec<_>>();
                 drop(node);
 
                 // send it to everyone else
@@ -72,5 +71,6 @@ async fn main() -> io::Result<()> {
         }),
     );
 
+    let node_mutex = Arc::new(Mutex::new(Node::default()));
     Node::serve(node_mutex, handlers).await
 }
