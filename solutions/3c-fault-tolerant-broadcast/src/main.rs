@@ -5,7 +5,7 @@ use std::{
 
 use serde_json::json;
 
-use node::{Node, build_default_handlers};
+use node::{Message, Node, build_default_handlers};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -13,7 +13,7 @@ async fn main() -> io::Result<()> {
 
     let mut handlers = build_default_handlers();
     handlers.insert(
-        String::from("read"),
+        "read",
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let node = node_mutex.lock().unwrap();
@@ -35,11 +35,34 @@ async fn main() -> io::Result<()> {
         }),
     );
     handlers.insert(
-        String::from("broadcast"),
+        "topology",
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let mut node = node_mutex.lock().unwrap();
-                let number = msg["body"]["message"].as_u64().unwrap();
+                let Some(topo) = msg.body["topology"].as_object() else {
+                    log::error!("ignoring invalid topology message :(");
+                    return;
+                };
+                for k in topo.keys() {
+                    node.topology.insert(k.clone());
+                }
+
+                let Some(reply) = node.build_reply("topology_ok", &msg, json!({})) else {
+                    return;
+                };
+
+                if let Err(e) = Node::send(&reply) {
+                    log::error!("failed to send topology_ok: {e}");
+                }
+            })
+        }),
+    );
+    handlers.insert(
+        "broadcast",
+        Arc::new(|node_mutex, msg| {
+            Box::pin(async move {
+                let mut node = node_mutex.lock().unwrap();
+                let number = msg.body["message"].as_u64().unwrap();
                 if node.values.contains(&number) {
                     return;
                 }
@@ -52,18 +75,18 @@ async fn main() -> io::Result<()> {
 
                 // send it to everyone else
                 for n in all_nodes {
-                    if *n == msg["src"] || *n == node_id {
+                    if *n == node_id {
                         continue;
                     }
-                    let new_msg = json!({
-                        "src": node_id,
-                        "dest": n,
-                        "body": msg["body"],
-                    });
+                    let new_msg = Message {
+                        dest: n,
+                        src: node_id.clone(),
+                        body: msg.body.clone(),
+                    };
                     let node_mut = node_mutex.clone();
                     let _ = Node::send_synchronous(
                         &node_mut,
-                        new_msg.clone(),
+                        new_msg,
                         tokio::time::Duration::from_millis(500),
                     );
                 }
