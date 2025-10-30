@@ -11,7 +11,9 @@ use serde_json::json;
 use tokio::task;
 
 pub type FnHandler = Arc<
-    dyn Fn(Arc<Mutex<Node>>, Message) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync,
+    dyn Fn(Arc<Mutex<Node>>, Message) -> Pin<Box<dyn Future<Output = Result<(), ()>> + Send>>
+        + Send
+        + Sync,
 >;
 type HandlersMap<'str> = HashMap<&'str str, FnHandler>;
 pub struct Node {
@@ -74,24 +76,22 @@ pub fn build_default_handlers() -> HandlersMap<'static> {
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let mut node = node_mutex.lock().unwrap();
+
                 if !node.id.is_empty() {
-                    return;
+                    return Ok(());
                 }
 
-                if let Some(node_id) = msg.body["node_id"].as_str() {
-                    node.id = node_id.to_string();
-                } else {
-                    log::error!("ignoring invalid init message :(");
-                    return;
-                }
+                node.id = msg.body["node_id"]
+                    .as_str()
+                    .ok_or_else(|| {
+                        log::error!("ignoring invalid init message :(");
+                    })?
+                    .to_string();
 
-                let Some(reply) = node.build_reply("init_ok", &msg, json!({})) else {
-                    return;
-                };
-
-                if let Err(e) = Node::send(&reply) {
+                let reply = node.build_reply("init_ok", &msg, json!({})).ok_or(())?;
+                Node::send(&reply).map_err(|e| {
                     log::error!("failed to send init_ok: {e}");
-                }
+                })
             })
         }),
     );
@@ -108,10 +108,10 @@ impl Node {
         tokio::spawn(async move {
             log::info!("starting message thread");
             while let Some(msg) = rx.recv().await {
-                let node_mut = node.clone();
-                let h = handlers.clone();
+                let node = node.clone();
+                let handlers = handlers.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = Node::handle_msg(node_mut, &h, msg).await {
+                    if let Err(e) = Node::handle_msg(node, &handlers, msg).await {
                         log::error!("failed to handle message: {e}");
                     }
                 });
@@ -136,12 +136,10 @@ impl Node {
         let json_str = serde_json::to_string(msg)?;
         let mut writer = std::io::stdout();
         writer.write_all(json_str.as_bytes())?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
+        writer.write_all(b"\n")?; // newlines autoflush the buffer
         Ok(())
     }
 
-    /// errors logged internally for convenience
     #[must_use]
     pub fn build_reply(
         &self,
@@ -234,7 +232,7 @@ impl Node {
     /// - panics if the mutex on `node_arc` is poisoned
     pub async fn handle_msg(
         node_arc: Arc<Mutex<Node>>,
-        handlers_map: &HandlersMap<'_>,
+        handlers: &HandlersMap<'_>,
         raw_msg: String,
     ) -> Result<(), String> {
         let msg = serde_json::from_str::<Message>(&raw_msg).map_err(|e| e.to_string())?;
@@ -247,11 +245,10 @@ impl Node {
         }
 
         let msg_type = msg.body["type"].as_str().unwrap();
-        let handler = handlers_map
+        _ = handlers
             .get(msg_type)
-            .ok_or(format!("handler {msg_type} not found"))?;
-        handler(node_arc, msg).await;
-
+            .ok_or(format!("handler {msg_type} not found"))?(node_arc, msg)
+        .await;
         Ok(())
     }
 }
