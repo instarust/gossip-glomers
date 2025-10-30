@@ -1,6 +1,7 @@
-use std::io;
-
-use std::sync::{Arc, Mutex};
+use std::{
+    io,
+    sync::{Arc, Mutex},
+};
 
 use serde_json::json;
 
@@ -16,18 +17,15 @@ async fn main() -> io::Result<()> {
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let node = node_mutex.lock().unwrap();
-                let Some(echo) = msg.body["echo"].as_str() else {
+                let echo = msg.body["echo"].as_str().ok_or_else(|| {
                     log::error!("ignoring invalid echo message :(");
-                    return;
-                };
-
-                let Some(reply) = &node.build_reply("echo_ok", &msg, json!({"echo": echo})) else {
-                    return;
-                };
-
-                if let Err(e) = Node::send(reply) {
+                })?;
+                let reply = node
+                    .build_reply("echo_ok", &msg, json!({"echo": echo}))
+                    .ok_or(())?;
+                Node::send(&reply).map_err(|e| {
                     log::error!("failed to send echo_ok: {e}");
-                }
+                })
             })
         }),
     );
