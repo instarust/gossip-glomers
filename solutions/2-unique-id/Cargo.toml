@@ -1,11 +1,12 @@
 [package]
-name = "single-node-broadcast"
+name = "unique-id"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 node.workspace = true
 
+uuid.workspace = true
 tokio = { workspace = true, features = ["full"] }
 serde_json.workspace = true
 log.workspace = true
