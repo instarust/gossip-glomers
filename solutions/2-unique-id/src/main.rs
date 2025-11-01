@@ -6,7 +6,7 @@ use std::{
 use serde_json::json;
 use uuid::Uuid;
 
-use node::{Node, build_default_handlers};
+use node::{Node, Server, build_default_handlers};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -15,14 +15,18 @@ async fn main() -> io::Result<()> {
     let mut handlers = build_default_handlers();
     handlers.insert(
         "generate",
-        Arc::new(|node_mutex, msg| {
+        Arc::new(|srv_mutex, msg| {
             Box::pin(async move {
+                let mut srv_any = srv_mutex.lock().unwrap();
+                let Some(node) = srv_any.as_any_mut().downcast_mut::<Node>() else {
+                    return Ok(());
+                };
+
                 let Some("generate") = msg.body["type"].as_str() else {
                     log::error!("ignoring invalid generate message :(");
                     return Err(());
                 };
 
-                let node = node_mutex.lock().unwrap();
                 let reply = &node
                     .build_reply(
                         "generate_ok",
@@ -30,7 +34,7 @@ async fn main() -> io::Result<()> {
                         json!({"id": Uuid::now_v7().to_string()}),
                     )
                     .ok_or(())?;
-                Node::send(reply).map_err(|e| {
+                node.send(reply).map_err(|e| {
                     log::error!("failed to send generate_ok: {e}");
                 })
             })
@@ -38,5 +42,5 @@ async fn main() -> io::Result<()> {
     );
 
     let node_mutex = Arc::new(Mutex::new(Node::default()));
-    Node::serve(node_mutex, handlers).await
+    node::serve(node_mutex, handlers).await
 }
