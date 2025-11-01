@@ -17,8 +17,6 @@ async fn main() -> io::Result<()> {
         "add",
         Arc::new(|srv_mutex, msg| {
             Box::pin(async move {
-                // add unique message ids to messages coming from non nodes, if i have seen this id before, dont apply the message. otherwise apply it
-                // ammar: deal with this unwrap hell
                 let mut skv_any = srv_mutex.lock().unwrap();
                 let Some(skv) = skv_any.as_any_mut().downcast_mut::<SequentialKV>() else {
                     return Ok(());
