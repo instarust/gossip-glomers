@@ -28,7 +28,7 @@ async fn main() -> io::Result<()> {
                             incoming_hash
                         } else {
                             log::error!("missing hash in message body");
-                            return Ok(());
+                            return Err(());
                         }
                     }
                     'c' => msg.hash(),
