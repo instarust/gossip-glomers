@@ -18,4 +18,4 @@ pub use types::{Message, Node, SequentialKV};
 // ammar: not sure about the global variable thing, maybe bring it back into the types ?
 type CallbackStore = Lazy<Mutex<HashMap<u64, Box<dyn FnOnce() + Send + Sync>>>>;
 
-pub static CALLBACKS: CallbackStore = Lazy::new(|| Mutex::new(HashMap::new()));
+pub static CALLBACKS: CallbackStore = std::sync::LazyLock::new(|| HashMap::new());
