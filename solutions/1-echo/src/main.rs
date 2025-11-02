@@ -16,15 +16,11 @@ async fn main() -> io::Result<()> {
         Arc::new(|node_mutex, msg| {
             Box::pin(async move {
                 let srv = node_mutex.lock().unwrap();
-                let Some(echo) = msg.body["echo"].as_str() else {
+                let echo = msg.body["echo"].as_str().ok_or_else(|| {
                     log::error!("ignoring invalid echo message :(");
-                    return Ok(());
-                };
-
-                let Some(reply) = &srv.build_reply("echo_ok", &msg, json!({"echo": echo})) else {
-                    return Ok(());
-                };
-
+                })?;
+                
+                let reply = &srv.build_reply("echo_ok", &msg, json!({"echo": echo})).ok_or(())?;
                 srv.send(reply).map_err(|e| {
                     log::error!("failed to send echo_ok: {e}");
                 })

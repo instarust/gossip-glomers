@@ -40,17 +40,6 @@ pub struct SequentialKV {
     pub msg_count: u64,
 }
 
-impl std::fmt::Debug for Node {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Node")
-            .field("id", &self.id)
-            .field("values", &self.values)
-            .field("topology", &self.topology)
-            .field("msg_count", &self.msg_count)
-            .finish()
-    }
-}
-
 impl Default for Node {
     fn default() -> Self {
         Self {

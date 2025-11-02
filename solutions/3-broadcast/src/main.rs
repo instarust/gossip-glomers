@@ -17,9 +17,9 @@ async fn main() -> io::Result<()> {
         Arc::new(|srv_mutex, msg| {
             Box::pin(async move {
                 let mut srv_any = srv_mutex.lock().unwrap();
-                let Some(node) = srv_any.as_any_mut().downcast_mut::<Node>() else {
-                    return Ok(());
-                };
+                let node = srv_any.as_any_mut().downcast_mut::<Node>().ok_or_else(|| {
+                    log::error!("server wasn't a node while calling a node handler");
+                })?;
                 let topo = msg.body["topology"].as_object().ok_or_else(|| {
                     log::error!("ignoring invalid topology message :(");
                 })?;
@@ -38,9 +38,9 @@ async fn main() -> io::Result<()> {
         Arc::new(|srv_mutex, msg| {
             Box::pin(async move {
                 let mut srv = srv_mutex.lock().unwrap();
-                let Some(node) = srv.as_any_mut().downcast_mut::<Node>() else {
-                    return Ok(());
-                };
+                let node= srv.as_any_mut().downcast_mut::<Node>().ok_or_else(|| {
+                    log::error!("server wasn't a node when calling a node handler");
+                })?;
 
                 let values: Vec<&u64> = node.values.iter().collect();
                 let reply = node
@@ -58,9 +58,9 @@ async fn main() -> io::Result<()> {
         Arc::new(|srv_mutex, msg| {
             Box::pin(async move {
                 let mut srv_any = srv_mutex.lock().unwrap();
-                let Some(node) = srv_any.as_any_mut().downcast_mut::<Node>() else {
-                    return Ok(());
-                };
+                let node= srv_any.as_any_mut().downcast_mut::<Node>().ok_or_else(|| {
+                    log::error!("server wasn't a node when calling a node handler");
+                })?;
 
                 let number = msg.body["message"].as_u64().ok_or(())?;
                 if node.values.contains(&number) {

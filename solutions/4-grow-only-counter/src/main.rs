@@ -18,9 +18,9 @@ async fn main() -> io::Result<()> {
         Arc::new(|srv_mutex, msg| {
             Box::pin(async move {
                 let mut skv_any = srv_mutex.lock().unwrap();
-                let Some(skv) = skv_any.as_any_mut().downcast_mut::<SequentialKV>() else {
-                    return Ok(());
-                };
+                let skv = skv_any.as_any_mut().downcast_mut::<SequentialKV>().ok_or_else(|| {
+                    log::error!("server wasn't a sequential kv when calling a sequential kv handler");
+                })?;
 
                 let msg_hash = match msg.src.as_bytes()[0] as char {
                     'n' => {
@@ -34,7 +34,7 @@ async fn main() -> io::Result<()> {
                     'c' => msg.hash(),
                     _ => {
                         log::error!("message has a sender that doesn't start with a c or n");
-                        return Ok(());
+                        return Err(());
                     }
                 };
                 let reply = &skv.build_reply("add_ok", &msg, json!({})).ok_or(())?;
@@ -82,9 +82,10 @@ async fn main() -> io::Result<()> {
         Arc::new(|seq_kv_mutex, msg| {
             Box::pin(async move {
                 let mut skv_any = seq_kv_mutex.lock().unwrap();
-                let Some(skv) = skv_any.as_any_mut().downcast_mut::<SequentialKV>() else {
-                    return Ok(());
-                };
+                
+                let skv = skv_any.as_any_mut().downcast_mut::<SequentialKV>().ok_or_else(|| {
+                    log::error!("server wasn't a sequential kv when calling a sequential kv handler");
+                })?;
 
                 let reply = &skv
                     .build_reply("read_ok", &msg, json!({"value": skv.counter}))
