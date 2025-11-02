@@ -138,7 +138,7 @@ pub fn send_synchronous(
         }
 
         // ammar: add payload identification for different message types
-        log::info!("node {dest} received message", dest = msg.dest,);
+        log::info!("node {} received message", msg.dest);
     });
     Ok(())
 }
