@@ -23,6 +23,7 @@ impl Message {
     }
 }
 
+#[derive(Debug)]
 pub struct Node {
     pub id: String,
     pub values: HashSet<u64>,
