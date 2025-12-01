@@ -20,7 +20,10 @@ rust_2018_idioms = "deny"
 unused_crate_dependencies = "deny"
 
 [workspace.lints.clippy]
-pedantic = "warn"
-perf = "warn"
 complexity = "deny"
 correctness = "deny"
+perf = "warn"
+nursery = "warn"
+style = "warn"
+suspicious = "warn"
+pedantic = "warn"
